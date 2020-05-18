@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"time"
@@ -13,32 +12,24 @@ import (
 var csvFile = flag.String("csv", "problems.csv", "File containing problems file in CSV file.")
 var limit = flag.Int("limit", 30, "the time limit for quiz in seconds")
 
-func askQuestion(counter int, rec []string, ch chan bool, waitTime time.Duration) int{
-	fmt.Printf("Problem %02d: %s\n", counter, rec[0])
-	var result string
-  go func() {
-        fmt.Scanf("%s", &result)
-        if rec[1] == result {
-      		ch <- true
-      		return
-      	}
-      	ch <- false
-    }()
-    select {
-    case isCorrect := <- ch:
-      if isCorrect {
-        return 1
-      }
-      return 0
-    case <-time.After(waitTime):
-      return 0
-    }
+type problem struct {
+	question string
+	answer string
+}
+
+func convert(records [][]string) []problem {
+	var result []problem
+	for _, r := range records {
+		if len(r) > 1 {
+			result = append(result, problem{r[0], r[1]})
+		}
+	}
+	return result
 }
 
 func main() {
 
 	flag.Parse()
-
 	file, err := os.Open(*csvFile)
 	if err != nil {
 		log.Fatal(err)
@@ -46,36 +37,38 @@ func main() {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	rec, err := reader.Read()
-
-  fmt.Println("Press enter to start")
-  fmt.Scanf("\n")
-	ch := make(chan bool)
-	total, correct := 0, 0
-	start := time.Now()
-	for err == nil {
-		if len(rec) != 2 {
-			log.Print("WARNING: Skipping invalid entry %v", rec)
-			continue
-		}
-
-		total++
-    timeWait := time.Duration(*limit) *time.Second - time.Now().Sub(start)
-    if timeWait >0 {
-      correct = correct + askQuestion(total, rec, ch, timeWait)
-    }
-    rec, err = reader.Read()
-	}
-	if err != io.EOF {
+	records, err := reader.ReadAll()
+	if err != nil {
 		log.Fatal(err)
 	}
-	if len(rec) > 0 {
-		total++
-    timeWait := time.Duration(*limit) *time.Second - time.Now().Sub(start)
-    if timeWait >0 {
-      correct = correct + askQuestion(total, rec, ch, timeWait)
-    }
-	}
 
-	fmt.Printf("You got %d of %d correct\n", correct, total)
+	problems := convert(records)
+  fmt.Println("Press enter to start")
+  fmt.Scanf("\n")
+
+	ansCh := make(chan string)
+	timer := time.NewTimer(time.Duration(*limit) * time.Second)
+	elapsed := false
+	correct := 0
+	for i, p := range problems {
+		if elapsed {
+			break
+		}
+		fmt.Printf("Problem %02d: %s\n", i+1, p.question)
+		go func() {
+			var ans string
+			fmt.Scanf("%s", &ans)
+			ansCh <- ans
+		}()
+
+		select {
+		case <- timer.C:
+			elapsed = true
+		case ans := <- ansCh:
+			if ans == p.answer {
+				correct++
+			}
+		}
+	}
+	fmt.Printf("You got %d of %d correct\n", correct, len(problems))
 }
